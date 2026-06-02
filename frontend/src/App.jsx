@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Route, Routes, Navigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 
@@ -25,6 +25,23 @@ const PageLoader = () => (
 );
 
 const App = () => {
+  const [theme, setTheme] = useState("light");
+
+  useEffect(() => {
+    const storedTheme = localStorage.getItem("theme");
+    const initialTheme =
+      storedTheme ||
+      (window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light");
+    setTheme(initialTheme);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+
   return (
     <>
       <Toaster
@@ -61,7 +78,7 @@ const App = () => {
             path="/dashboard"
             element={
               <ProtectedRoute>
-                <Dashboard />
+                <Dashboard theme={theme} setTheme={setTheme} />
               </ProtectedRoute>
             }
           />
@@ -69,7 +86,7 @@ const App = () => {
             path="/interview/:id"
             element={
               <ProtectedRoute>
-                <InterviewPrep />
+                <InterviewPrep theme={theme} setTheme={setTheme} />
               </ProtectedRoute>
             }
           />

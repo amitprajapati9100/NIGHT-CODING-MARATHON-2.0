@@ -1,11 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { useAuth } from "../context/useAuth";
 import { API_PATHS } from "../utils/apiPaths";
 import axiosInstance from "../utils/axiosInstance";
-import { getErrorMessage } from "../utils/helpers";
+import {
+  EMAIL_RULE,
+  getErrorMessage,
+  isStrongPassword,
+  isValidEmail,
+  PASSWORD_RULE,
+} from "../utils/helpers";
 
 const AUTH_REQUEST_CONFIG = {
   timeout: 20000,
@@ -17,10 +23,25 @@ const SignUp = () => {
     email: "",
     password: "",
   });
+  const [captcha, setCaptcha] = useState({ question: "", token: "" });
+  const [captchaAnswer, setCaptchaAnswer] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const navigate = useNavigate();
   const { setAuth } = useAuth();
+
+  const loadCaptcha = async () => {
+    try {
+      const response = await axiosInstance.get(API_PATHS.AUTH.CAPTCHA, AUTH_REQUEST_CONFIG);
+      setCaptcha(response.data.captcha || { question: "", token: "" });
+    } catch {
+      setCaptcha({ question: "", token: "" });
+    }
+  };
+
+  useEffect(() => {
+    loadCaptcha();
+  }, []);
 
   const handleSignup = async (event) => {
     event.preventDefault();
@@ -32,8 +53,18 @@ const SignUp = () => {
       return;
     }
 
-    if (form.password.trim().length < 6) {
-      setErrorMessage("Password must be at least 6 characters long.");
+    if (!isValidEmail(form.email.trim())) {
+      setErrorMessage(EMAIL_RULE);
+      return;
+    }
+
+    if (!isStrongPassword(form.password.trim())) {
+      setErrorMessage(PASSWORD_RULE);
+      return;
+    }
+
+    if (!captcha.token || !captchaAnswer.trim()) {
+      setErrorMessage("Please solve the CAPTCHA.");
       return;
     }
 
@@ -42,7 +73,11 @@ const SignUp = () => {
     try {
       const response = await axiosInstance.post(
         API_PATHS.AUTH.SIGNUP,
-        form,
+        {
+          ...form,
+          captchaToken: captcha.token,
+          captchaAnswer: captchaAnswer.trim(),
+        },
         AUTH_REQUEST_CONFIG,
       );
       setAuth(response.data);
@@ -50,6 +85,8 @@ const SignUp = () => {
       navigate("/dashboard");
     } catch (error) {
       setErrorMessage(getErrorMessage(error, "Signup failed."));
+      await loadCaptcha();
+      setCaptchaAnswer("");
     } finally {
       setSubmitting(false);
     }
@@ -91,6 +128,28 @@ const SignUp = () => {
                   {item}
                 </div>
               ))}
+            </div>
+
+            <div className="mt-4 rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-slate-700">
+                  CAPTCHA: {captcha.question || "Loading..."}
+                </p>
+                <button
+                  type="button"
+                  onClick={loadCaptcha}
+                  className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-900 hover:text-slate-900"
+                >
+                  Refresh
+                </button>
+              </div>
+              <input
+                type="text"
+                value={captchaAnswer}
+                onChange={(event) => setCaptchaAnswer(event.target.value)}
+                placeholder="Enter answer"
+                className="mt-3 w-full rounded-[1rem] border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-orange-400"
+              />
             </div>
           </div>
         </section>
@@ -157,6 +216,9 @@ const SignUp = () => {
                   placeholder="Minimum 6 characters"
                   className="rounded-[1.25rem] border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-orange-400 focus:bg-white"
                 />
+                <span className="text-xs text-slate-500">
+                  Minimum 8 chars with uppercase, lowercase, number, and special character.
+                </span>
               </label>
             </div>
 

@@ -5,6 +5,7 @@ export const questionAnswerPrompt = (
   description = "",
   company = "",
   numberOfQuestions = 10,
+  recentContext = "",
 ) => {
   return `You are a senior engineer conducting a technical interview.
 
@@ -14,22 +15,25 @@ Generate exactly ${numberOfQuestions} interview questions for the following prof
 - Topics to focus on: ${topicsToFocus || "general topics for this role"}
 - Target company or domain: ${company || "general product/company interviews"}
 - Candidate context: ${description || "No additional context provided"}
+${recentContext ? `- Recent interview signals:\n${recentContext}` : ""}
 
 Rules for each question:
-1. The "answer" field must be well-structured using markdown:
-   - Use **bold** for key terms
-   - Use bullet points or numbered lists where appropriate
-   - Add a short \`\`\`js ... \`\`\` code block when relevant (keep it under 10 lines)
-   - Break the answer into short paragraphs — never one wall of text
-2. Answers should be beginner-friendly but technically accurate.
-3. Difficulty should match ${experience} years of experience.
+1. The "answer" must be directly tailored to the user profile and context (role, experience, company style, and focus topics). Avoid generic textbook wording.
+2. The "answer" field must use this exact structure in markdown:
+   - **Direct Answer:** 2-3 lines, plain and exact.
+   - **Practical Example:** one realistic implementation or debugging scenario for this role.
+   - **Trade-off / Lesson:** 1-2 lines on decision, risk, or learning.
+   - Optional short \`\`\`js ... \`\`\` block only if it improves clarity (under 10 lines).
+3. Keep each answer concise (120-220 words), technically correct, and matched to ${experience} years of experience.
+4. Do NOT include meta coaching text like "How to answer well", "you should say", or interview tip templates.
+5. Use the recent interview signals to align with what candidates are currently being asked, while keeping answers practical and role-specific.
 
 Return ONLY a valid JSON array. No extra text, no markdown wrapper around the JSON.
 
 [
   {
     "question": "...",
-    "answer": "**Definition:** ...\\n\\n**Key points:**\\n- Point 1\\n- Point 2\\n\\n\`\`\`js\\n// example\\n\`\`\`"
+    "answer": "**Direct Answer:** ...\\n\\n**Practical Example:** ...\\n\\n**Trade-off / Lesson:** ..."
   }
 ]`;
 };
@@ -42,7 +46,7 @@ Explain the following interview question in depth:
 
 Structure your explanation like this:
 1. Start with a **one-line definition** in bold.
-2. Explain the concept in 2–3 short paragraphs.
+2. Explain the concept in 2-3 short paragraphs.
 3. Use bullet points for any list of features, pros/cons, or steps.
 4. If relevant, include a small code example (under 10 lines) in a \`\`\`js block.
 5. End with a **"Key Takeaway"** line summarizing the concept in one sentence.
@@ -54,3 +58,38 @@ Return ONLY a valid JSON object in this exact shape. No extra text outside the J
   "explanation": "**Definition:** ...\\n\\n Paragraph...\\n\\n**Key Takeaway:** ..."
 }`;
 };
+
+export const regenerateAnswerPrompt = ({
+  role,
+  experience,
+  company = "",
+  topicsToFocus = "",
+  description = "",
+  question,
+  userInput = "",
+}) => `You are a senior interviewer writing a high-quality model answer.
+
+Candidate profile:
+- Role: ${role}
+- Experience: ${experience} years
+- Company/domain: ${company || "general"}
+- Focus topics: ${topicsToFocus || "general"}
+- Context: ${description || "not provided"}
+
+Question:
+"${question}"
+
+User requirement for this regenerated answer:
+"${userInput || "Make it practical and project-based"}"
+
+Write one concise answer in markdown with this exact structure:
+1. **Direct Answer:** 2-3 lines, exact and clear.
+2. **Practical Example:** one realistic implementation/debugging example.
+3. **Trade-off / Lesson:** 1-2 lines with decision or lesson.
+4. Optional short \`\`\`js code block if needed (max 10 lines).
+
+Do not include interview coaching templates.
+Return ONLY valid JSON object:
+{
+  "answer": "..."
+}`;

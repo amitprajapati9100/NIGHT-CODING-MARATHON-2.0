@@ -25,7 +25,7 @@ const initialForm = {
   description: "",
 };
 
-const Dashboard = () => {
+const Dashboard = ({ theme, setTheme }) => {
   const [sessions, setSessions] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(true);
@@ -129,6 +129,8 @@ const Dashboard = () => {
 
   return (
     <AppShell
+      theme={theme}
+      setTheme={setTheme}
       title={`Welcome back, ${user?.name?.split(" ")[0] || "there"}`}
       subtitle="Create a focused interview session, generate technical questions, and keep your prep organized in one place."
       actions={

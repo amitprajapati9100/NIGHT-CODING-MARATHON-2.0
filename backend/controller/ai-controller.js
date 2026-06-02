@@ -5,6 +5,7 @@ import Question from "../models/question-model.js";
 import Session from "../models/session-model.js";
 import {
   conceptExplainPrompt,
+  regenerateAnswerPrompt,
   questionAnswerPrompt,
 } from "../utils/prompts-util.js";
 import { sendServerError } from "../utils/error-response-util.js";
@@ -19,6 +20,7 @@ const AI_REQUEST_TIMEOUT_MS =
   Number.isFinite(parsedAiTimeout) && parsedAiTimeout > 0
     ? parsedAiTimeout
     : DEFAULT_AI_TIMEOUT_MS;
+const RECENT_SIGNAL_LIMIT = 25;
 
 const sessionPopulate = {
   path: "questions",
@@ -96,29 +98,48 @@ const getDifficultyLabel = (experience) => {
   return "senior";
 };
 
-const getCodeSnippet = (topic) => {
-  const normalizedTopic = topic.toLowerCase();
+const cleanGeneratedAnswer = (answer = "") =>
+  answer
+    .replace(/\*\*How to answer well:\*\*[\s\S]*?(?=\n\s*```|$)/gi, "")
+    .replace(/How to answer well:[\s\S]*?(?=\n\s*```|$)/gi, "")
+    .replace(
+      /```(?:js|javascript)?\s*const result = items\.filter\(Boolean\)\.map\(\(item\) => item\.trim\(\)\);\s*```/gi,
+      "",
+    )
+    .replace(
+      /const result = items\.filter\(Boolean\)\.map\(\(item\) => item\.trim\(\)\);/gi,
+      "",
+    )
+    .trim();
 
-  if (
-    normalizedTopic.includes("react") ||
-    normalizedTopic.includes("state")
-  ) {
-    return "```js\nsetState((current) => ({ ...current, loading: false }));\n```";
+const buildRequirementContext = (session) => {
+  const parts = [];
+  if (session.role) parts.push(`Role: ${session.role}`);
+  if (session.experience) parts.push(`Experience: ${session.experience}`);
+  if (session.company) parts.push(`Target: ${session.company}`);
+  if (session.topicsToFocus) parts.push(`Focus: ${session.topicsToFocus}`);
+  return parts.join(" | ");
+};
+
+const enforceAnswerQuality = (session, question, answer) => {
+  const sanitized = cleanGeneratedAnswer(answer);
+  const lower = sanitized.toLowerCase();
+  const hasDirect = lower.includes("**direct answer:**");
+  const hasPractical = lower.includes("**practical example:**");
+  const hasTradeoff = lower.includes("**trade-off / lesson:**");
+
+  if (hasDirect && hasPractical && hasTradeoff) {
+    return sanitized;
   }
 
-  if (
-    normalizedTopic.includes("api") ||
-    normalizedTopic.includes("auth") ||
-    normalizedTopic.includes("backend")
-  ) {
-    return "```js\napp.get('/api/health', (req, res) => res.json({ ok: true }));\n```";
-  }
-
-  if (normalizedTopic.includes("database") || normalizedTopic.includes("sql")) {
-    return "```js\nconst users = await User.find({ isActive: true }).limit(10);\n```";
-  }
-
-  return "```js\nconst result = items.filter(Boolean).map((item) => item.trim());\n```";
+  const requirement = buildRequirementContext(session);
+  return [
+    `**Direct Answer:** ${question} should be answered in the context of ${session.role}. Focus on what you built, why you chose that approach, and the measurable impact.`,
+    "",
+    `**Practical Example:** In a ${session.role} project (${requirement}), explain one real implementation or debugging case. Mention the issue, the steps you took, and the result.`,
+    "",
+    "**Trade-off / Lesson:** State one alternative you considered and why your final choice was better for performance, maintainability, or delivery speed.",
+  ].join("\n");
 };
 
 const toTitleCase = (value) =>
@@ -132,19 +153,11 @@ const buildFallbackAnswer = (session, topic) => {
   const difficulty = getDifficultyLabel(session.experience);
 
   return [
-    `**Definition:** ${topic} is a key part of delivering strong ${session.role} solutions, especially at a ${difficulty} interview level.`,
+    `**Direct Answer:** ${topic} is important for strong ${session.role} solutions, especially at a ${difficulty} level interview.`,
     "",
-    "**Key points to cover:**",
-    `- Start with a clear explanation of what ${topic} means in real projects.`,
-    `- Connect it to one concrete example from your own ${session.role} work.`,
-    "- Mention trade-offs, debugging strategy, or performance impact when relevant.",
+    `**Practical Example:** Explain one real project where you used ${topic}, what challenge appeared, and how your final implementation solved it.`,
     "",
-    "**How to answer well:**",
-    "1. Define the concept in simple language.",
-    "2. Walk through a practical implementation or debugging example.",
-    "3. End with the outcome, trade-off, or lesson learned.",
-    "",
-    getCodeSnippet(topic),
+    "**Trade-off / Lesson:** Mention one alternative approach and why your chosen path was better for reliability, performance, or maintainability.",
   ].join("\n");
 };
 
@@ -216,22 +229,89 @@ const withTimeout = (promise, timeoutMs, timeoutMessage) =>
       });
   });
 
-const normalizeQuestions = (questions) =>
+const normalizeQuestions = (questions, session) =>
   questions
     .filter((item) => item?.question)
     .map((item) => ({
       question: item.question.trim(),
       answer:
         typeof item.answer === "string" && item.answer.trim()
-          ? item.answer.trim()
-          : "**Definition:** Share a practical answer with an example from your work.",
+          ? enforceAnswerQuality(session, item.question.trim(), item.answer.trim())
+          : enforceAnswerQuality(
+              session,
+              item.question.trim(),
+              "**Direct Answer:** Share a practical answer with an example from your work.",
+            ),
     }));
+
+const escapeRegExp = (value = "") =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildRecentInterviewSignals = async (session) => {
+  const filters = [];
+  const role = session.role?.trim();
+  const company = session.company?.trim();
+  const topics = session.topicsToFocus
+    ?.split(",")
+    .map((topic) => topic.trim())
+    .filter(Boolean);
+
+  if (role) {
+    filters.push({
+      "session.role": { $regex: escapeRegExp(role), $options: "i" },
+    });
+  }
+
+  if (company) {
+    filters.push({
+      "session.company": { $regex: escapeRegExp(company), $options: "i" },
+    });
+  }
+
+  if (topics?.length) {
+    filters.push({
+      "session.topicsToFocus": {
+        $regex: escapeRegExp(topics[0]),
+        $options: "i",
+      },
+    });
+  }
+
+  const matchStage = filters.length ? { $or: filters } : {};
+
+  const recent = await Question.aggregate([
+    {
+      $lookup: {
+        from: "sessions",
+        localField: "session",
+        foreignField: "_id",
+        as: "session",
+      },
+    },
+    { $unwind: "$session" },
+    { $match: matchStage },
+    { $sort: { createdAt: -1 } },
+    { $limit: RECENT_SIGNAL_LIMIT },
+    {
+      $project: {
+        question: 1,
+      },
+    },
+  ]);
+
+  if (!recent.length) return "";
+
+  return recent
+    .map((item, index) => `${index + 1}. ${item.question}`)
+    .join("\n");
+};
 
 const generateQuestionsWithGemini = async (session, count) => {
   if (!ai) {
     throw new Error("Gemini API key is not configured");
   }
 
+  const recentContext = await buildRecentInterviewSignals(session);
   const prompt = questionAnswerPrompt(
     session.role,
     session.experience,
@@ -239,6 +319,7 @@ const generateQuestionsWithGemini = async (session, count) => {
     session.description,
     session.company,
     count,
+    recentContext,
   );
 
   const response = await withTimeout(
@@ -257,7 +338,7 @@ const generateQuestionsWithGemini = async (session, count) => {
     .join("");
 
   const parsed = safeJsonParse(rawText, /\[[\s\S]*\]/);
-  const normalizedQuestions = normalizeQuestions(parsed);
+  const normalizedQuestions = normalizeQuestions(parsed, session);
 
   if (!normalizedQuestions.length) {
     throw new Error("AI did not return any valid questions");
@@ -487,5 +568,109 @@ export const generateConceptExplanation = async (req, res) => {
   } catch (error) {
     console.error(error);
     return sendServerError(res, error, "Failed to generate explanation");
+  }
+};
+
+// @desc    Regenerate answer for one interview question using user guidance
+// @route   POST /api/ai/regenerate-answer
+// @access  Private
+export const regenerateQuestionAnswer = async (req, res) => {
+  try {
+    const { questionId, userInput = "" } = req.body;
+
+    if (!questionId) {
+      return res.status(400).json({
+        success: false,
+        message: "questionId is required",
+      });
+    }
+
+    const questionDoc = await Question.findById(questionId).populate({
+      path: "session",
+      select: "user role experience company topicsToFocus description",
+    });
+
+    if (!questionDoc) {
+      return res.status(404).json({
+        success: false,
+        message: "Question not found",
+      });
+    }
+
+    if (questionDoc.session.user.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized",
+      });
+    }
+
+    let nextAnswer = "";
+    let source = "fallback";
+    const session = questionDoc.session;
+
+    try {
+      if (!ai) {
+        throw new Error("Gemini API key is not configured");
+      }
+
+      const prompt = regenerateAnswerPrompt({
+        role: session.role,
+        experience: session.experience,
+        company: session.company,
+        topicsToFocus: session.topicsToFocus,
+        description: session.description,
+        question: questionDoc.question,
+        userInput,
+      });
+
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: prompt,
+        }),
+        AI_REQUEST_TIMEOUT_MS,
+        "Gemini answer regeneration timed out",
+      );
+
+      const rawText = response.text || "";
+      const parsed = safeJsonParse(rawText, /\{[\s\S]*\}/);
+      if (!parsed?.answer || typeof parsed.answer !== "string") {
+        throw new Error("Invalid regenerated answer");
+      }
+
+      nextAnswer = enforceAnswerQuality(
+        session,
+        questionDoc.question,
+        parsed.answer.trim(),
+      );
+      source = "gemini";
+    } catch (error) {
+      if (ai) {
+        console.warn("Falling back to local answer regeneration:", error.message);
+      }
+      nextAnswer = enforceAnswerQuality(
+        session,
+        questionDoc.question,
+        [
+          `**Direct Answer:** ${questionDoc.question} should be answered for a ${session.role} role by focusing on exactly what you implemented and why.`,
+          "",
+          `**Practical Example:** ${userInput || "Use a recent project where you solved this in production. Mention issue, fix, and measurable outcome."}`,
+          "",
+          "**Trade-off / Lesson:** Mention one alternative, why you did not choose it, and the lesson for future systems.",
+        ].join("\n"),
+      );
+    }
+
+    questionDoc.answer = nextAnswer;
+    await questionDoc.save();
+
+    return res.status(200).json({
+      success: true,
+      source,
+      question: questionDoc,
+    });
+  } catch (error) {
+    console.error(error);
+    return sendServerError(res, error, "Failed to regenerate answer");
   }
 };

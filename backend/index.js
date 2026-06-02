@@ -11,6 +11,7 @@ import aiRoutes from "./routes/ai-route.js";
 import authRoutes from "./routes/auth-route.js";
 import questionRoutes from "./routes/question-route.js";
 import sessionRoutes from "./routes/session-route.js";
+import thanksRoutes from "./routes/thanks-route.js";
 
 const app = express();
 const PORT = process.env.PORT || 9001;
@@ -96,6 +97,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/sessions", sessionRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/questions", questionRoutes);
+app.use("/api/thanks", thanksRoutes);
 
 app.use((error, req, res, next) => {
   if (error?.message === "Origin not allowed by CORS") {

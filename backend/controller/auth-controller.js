@@ -3,6 +3,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { ensureDatabaseConnection } from "../config/database-config.js";
 import { sendServerError } from "../utils/error-response-util.js";
+import { isStrongPassword, PASSWORD_RULE } from "../utils/password-util.js";
+import { generateCaptchaChallenge, verifyCaptchaChallenge } from "../utils/captcha-util.js";
+import { EMAIL_RULE, isValidEmail } from "../utils/validation-util.js";
 
 const generateToken = (userId) => {
   return jwt.sign(
@@ -23,7 +26,7 @@ export const registerUser = async (req, res) => {
   try {
     await ensureDatabaseConnection();
 
-    const { name, email, password } = req.body;
+    const { name, email, password, captchaToken, captchaAnswer } = req.body;
     const normalizedEmail = email?.trim().toLowerCase();
     const trimmedName = name?.trim();
 
@@ -33,10 +36,16 @@ export const registerUser = async (req, res) => {
         .json({ message: "Please provide all required fields" });
     }
 
-    if (password.length < 6) {
-      return res
-        .status(400)
-        .json({ message: "Password must be at least 6 characters long" });
+    if (!isValidEmail(normalizedEmail)) {
+      return res.status(400).json({ message: EMAIL_RULE });
+    }
+
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({ message: PASSWORD_RULE });
+    }
+
+    if (!verifyCaptchaChallenge(captchaToken, captchaAnswer)) {
+      return res.status(400).json({ message: "Invalid or expired CAPTCHA. Please try again." });
     }
 
     const userExists = await User.findOne({ email: normalizedEmail }).lean().exec();
@@ -63,13 +72,21 @@ export const loginUser = async (req, res) => {
   try {
     await ensureDatabaseConnection();
 
-    const { email, password } = req.body;
+    const { email, password, captchaToken, captchaAnswer } = req.body;
     const normalizedEmail = email?.trim().toLowerCase();
 
     if (!normalizedEmail || !password) {
       return res
         .status(400)
         .json({ message: "Please provide email and password" });
+    }
+
+    if (!isValidEmail(normalizedEmail)) {
+      return res.status(400).json({ message: EMAIL_RULE });
+    }
+
+    if (!verifyCaptchaChallenge(captchaToken, captchaAnswer)) {
+      return res.status(400).json({ message: "Invalid or expired CAPTCHA. Please try again." });
     }
 
     const user = await User.findOne({ email: normalizedEmail }).exec();
@@ -82,6 +99,14 @@ export const loginUser = async (req, res) => {
   } catch (error) {
     return sendServerError(res, error, error.message);
   }
+};
+
+export const getCaptcha = async (req, res) => {
+  const challenge = generateCaptchaChallenge();
+  return res.status(200).json({
+    success: true,
+    captcha: challenge,
+  });
 };
 
 export const getCurrentUser = async (req, res) => {

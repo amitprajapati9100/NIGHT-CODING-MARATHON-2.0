@@ -3,6 +3,7 @@ import { useDeferredValue, useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import {
   FiArrowLeft,
+  FiPrinter,
   FiFileText,
   FiSearch,
   FiStar,
@@ -17,11 +18,13 @@ import GenerateButton from "../components/GenerateButton";
 import MarkdownContent from "../components/MarkdownContent";
 import QuestionCard from "../components/QuestionCard";
 import SkeletonCard from "../components/SkeletonCard";
+import TopicCanvas from "../components/TopicCanvas";
 import { API_PATHS } from "../utils/apiPaths";
 import axiosInstance from "../utils/axiosInstance";
 import {
   formatQuestionCount,
   getErrorMessage,
+  sanitizeAnswer,
   sortQuestions,
 } from "../utils/helpers";
 
@@ -31,7 +34,7 @@ const normalizeSession = (session) => ({
 });
 const MotionDiv = motion.div;
 
-const InterviewPrep = () => {
+const InterviewPrep = ({ theme, setTheme }) => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [session, setSession] = useState(null);
@@ -41,6 +44,7 @@ const InterviewPrep = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [savingQuestionId, setSavingQuestionId] = useState("");
   const [explainingId, setExplainingId] = useState("");
+  const [regeneratingId, setRegeneratingId] = useState("");
   const [selectedExplanation, setSelectedExplanation] = useState(null);
   const deferredQuery = useDeferredValue(searchQuery);
 
@@ -198,6 +202,28 @@ const InterviewPrep = () => {
     }
   };
 
+  const handleRegenerateAnswer = async (question, userInput) => {
+    setRegeneratingId(question._id);
+    try {
+      const response = await axiosInstance.post(
+        API_PATHS.AI.REGENERATE_ANSWER,
+        {
+          questionId: question._id,
+          userInput: userInput?.trim() || "",
+        },
+        { timeout: 30000 },
+      );
+      updateQuestionLocally(response.data.question);
+      toast.success("Answer regenerated.");
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error, "We could not regenerate the answer."),
+      );
+    } finally {
+      setRegeneratingId("");
+    }
+  };
+
   const questions = session?.questions || [];
   const visibleQuestions = questions.filter((question) => {
     const query = deferredQuery.trim().toLowerCase();
@@ -211,9 +237,12 @@ const InterviewPrep = () => {
     );
   });
   const pinnedCount = questions.filter((question) => question.isPinned).length;
+  const handlePrint = () => window.print();
 
   return (
     <AppShell
+      theme={theme}
+      setTheme={setTheme}
       title={session ? `${session.role} Interview Workspace` : "Interview Workspace"}
       subtitle={
         session
@@ -241,6 +270,14 @@ const InterviewPrep = () => {
               questions.length ? "Regenerating Questions" : "Generating Questions"
             }
           />
+          <button
+            type="button"
+            onClick={handlePrint}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-900 hover:text-slate-900 print:hidden"
+          >
+            <FiPrinter className="h-4 w-4" />
+            Print to PDF
+          </button>
         </>
       }
     >
@@ -281,7 +318,7 @@ const InterviewPrep = () => {
               Review answers, save your own notes, and search instantly
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              Use search to filter by concepts, pin the questions you want to repeat, and open explanations whenever you need a deeper breakdown.
+              Use search to filter by concepts, pin the questions you want to repeat, and open explanations whenever you need a deeper breakdown. New answers are now aligned with recent interview patterns for your role.
             </p>
           </div>
 
@@ -339,6 +376,7 @@ const InterviewPrep = () => {
                     question={question}
                     saving={savingQuestionId === question._id}
                     explaining={explainingId === question._id}
+                    regenerating={regeneratingId === question._id}
                     onTogglePin={(currentQuestion) =>
                       patchQuestion(
                         currentQuestion,
@@ -356,12 +394,40 @@ const InterviewPrep = () => {
                       )
                     }
                     onExplain={handleExplain}
+                    onRegenerateAnswer={handleRegenerateAnswer}
                   />
                 </MotionDiv>
               ))}
             </div>
           </AnimatePresence>
         )}
+      </section>
+
+      <section className="print-only mt-10">
+        <h2 className="text-2xl font-bold">{session?.role || "Interview Questions"}</h2>
+        <p className="mt-2 text-sm text-slate-600">
+          {session?.company ? `${session.company} | ` : ""}
+          {session?.experience ? `${session.experience} experience` : ""}
+        </p>
+        <div className="mt-6 space-y-6">
+          {visibleQuestions.map((question, index) => (
+            <article key={`print-${question._id}`} className="break-inside-avoid rounded-xl border border-slate-300 p-4">
+              <h3 className="text-lg font-semibold">
+                {index + 1}. {question.question}
+              </h3>
+              <div className="mt-2">
+                <MarkdownContent
+                  content={sanitizeAnswer(question.answer || "No answer generated yet.")}
+                />
+              </div>
+              {question.note ? (
+                <p className="mt-3 text-sm">
+                  <strong>Note:</strong> {question.note}
+                </p>
+              ) : null}
+            </article>
+          ))}
+        </div>
       </section>
 
       <AnimatePresence>
@@ -413,7 +479,15 @@ const InterviewPrep = () => {
                   </div>
                 </div>
 
+                <TopicCanvas
+                  title={selectedExplanation.title}
+                  question={selectedExplanation.question}
+                  explanation={selectedExplanation.explanation}
+                />
+
+                <div className="mt-6">
                 <MarkdownContent content={selectedExplanation.explanation} />
+                </div>
               </div>
             </MotionDiv>
           </MotionDiv>

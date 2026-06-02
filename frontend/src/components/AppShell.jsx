@@ -1,14 +1,14 @@
 import Navbar from "./Navbar";
 
-const AppShell = ({ title, subtitle, actions, children }) => (
-  <div className="min-h-screen bg-[#f5f3ec] text-slate-900">
+const AppShell = ({ title, subtitle, actions, children, theme, setTheme }) => (
+  <div className="app-shell min-h-screen bg-[#f5f3ec] text-slate-900">
     <div className="pointer-events-none fixed inset-0 overflow-hidden">
       <div className="absolute left-[-10%] -top-48 h-104 w-104 rounded-full bg-orange-200/40 blur-3xl" />
       <div className="absolute -bottom-40 right-[-10%] h-96 w-[24rem] rounded-full bg-cyan-200/30 blur-3xl" />
     </div>
 
     <div className="relative">
-      <Navbar />
+      <Navbar theme={theme} setTheme={setTheme} />
 
       <main className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <section className="mb-8 flex flex-col gap-5 rounded-4xl border border-white/50 bg-white/80 p-6 shadow-xl shadow-slate-900/5 backdrop-blur xl:flex-row xl:items-end xl:justify-between">
